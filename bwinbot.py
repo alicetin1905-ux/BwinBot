@@ -42,7 +42,7 @@ class Selection:
     point: float | None
     odds: float
     bookmaker: str
-    edge: float | None = None  # EV vs. the other bookmakers' consensus, None if unknown
+    edge: float | None = None  # EV vs. other bookmaker groups' consensus, None if unknown
 
     @property
     def match(self) -> str:
@@ -109,7 +109,8 @@ def scores_source(args):
 # --- selections -------------------------------------------------------------------------
 
 def to_selections(events: list[dict], bookmaker: str | None = None) -> list[Selection]:
-    """Flatten events to selections. Edge uses the *other* bookmakers' margin-free probabilities.
+    """Flatten events to selections. Edge uses the margin-free probabilities of other bookmakers
+    (regional variants like unibet_se/unibet_uk count as one group, so they never vouch for themselves).
 
     Asian quarter lines (2.25, 1.75, ...) are skipped: they split the stake over two lines, which
     `grade` does not model.
@@ -135,7 +136,9 @@ def to_selections(events: list[dict], bookmaker: str | None = None) -> list[Sele
                 for o in m["outcomes"]:
                     if o.get("point") is not None and (o["point"] * 2) % 1:
                         continue
-                    others = [p for k, p in fair[(m["key"], o["name"], o.get("point"))] if k != b["key"]]
+                    group = b["key"].split("_")[0]
+                    others = [p for k, p in fair[(m["key"], o["name"], o.get("point"))]
+                              if k.split("_")[0] != group]
                     edge = sum(others) / len(others) * o["price"] - 1 if others else None
                     out.append(Selection(
                         ev["id"], ev.get("sport_key", ""), ev.get("sport_title", ""),
