@@ -1,21 +1,41 @@
 [
-  {"id": "e1", "sport_title": "EPL", "commence_time": "2026-10-18T14:00:00Z", "home_team": "Arsenal", "away_team": "Chelsea",
+  {"id": "e1", "sport_key": "soccer_epl", "sport_title": "EPL", "commence_time": "2026-10-18T14:00:00Z", "home_team": "Arsenal", "away_team": "Chelsea",
    "bookmakers": [
-     {"key": "bwin", "title": "bwin", "markets": [{"key": "h2h", "outcomes": [{"name": "Arsenal", "price": 2.05}, {"name": "Chelsea", "price": 3.60}, {"name": "Draw", "price": 3.40}]}]},
-     {"key": "unibet", "title": "Unibet", "markets": [{"key": "h2h", "outcomes": [{"name": "Arsenal", "price": 1.95}, {"name": "Chelsea", "price": 3.70}, {"name": "Draw", "price": 3.50}]}]}
+     {"key": "bwin", "title": "bwin", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Arsenal", "price": 2.10}, {"name": "Chelsea", "price": 3.60}, {"name": "Draw", "price": 3.40}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.95, "point": 2.5}, {"name": "Under", "price": 1.90, "point": 2.5}]}]},
+     {"key": "unibet", "title": "Unibet", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Arsenal", "price": 1.95}, {"name": "Chelsea", "price": 3.70}, {"name": "Draw", "price": 3.50}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.88, "point": 2.5}, {"name": "Under", "price": 1.97, "point": 2.5}]}]},
+     {"key": "betclic", "title": "Betclic", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Arsenal", "price": 1.97}, {"name": "Chelsea", "price": 3.75}, {"name": "Draw", "price": 3.45}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.90, "point": 2.5}, {"name": "Under", "price": 1.95, "point": 2.5}]}]}
    ]},
-  {"id": "e2", "sport_title": "La Liga", "commence_time": "2026-10-18T19:00:00Z", "home_team": "Sevilla", "away_team": "Valencia",
+  {"id": "e2", "sport_key": "soccer_spain_la_liga", "sport_title": "La Liga", "commence_time": "2026-10-18T19:00:00Z", "home_team": "Sevilla", "away_team": "Valencia",
    "bookmakers": [
-     {"key": "bwin", "title": "bwin", "markets": [{"key": "h2h", "outcomes": [{"name": "Sevilla", "price": 1.98}, {"name": "Valencia", "price": 4.00}, {"name": "Draw", "price": 3.30}]}]},
-     {"key": "unibet", "title": "Unibet", "markets": [{"key": "h2h", "outcomes": [{"name": "Sevilla", "price": 1.90}, {"name": "Valencia", "price": 4.10}, {"name": "Draw", "price": 3.40}]}]}
+     {"key": "bwin", "title": "bwin", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Sevilla", "price": 1.98}, {"name": "Valencia", "price": 4.00}, {"name": "Draw", "price": 3.30}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 2.10, "point": 2.5}, {"name": "Under", "price": 1.75, "point": 2.5}]}]},
+     {"key": "unibet", "title": "Unibet", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Sevilla", "price": 1.90}, {"name": "Valencia", "price": 4.10}, {"name": "Draw", "price": 3.40}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.95, "point": 2.5}, {"name": "Under", "price": 1.85, "point": 2.5}]}]},
+     {"key": "betclic", "title": "Betclic", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Sevilla", "price": 1.92}, {"name": "Valencia", "price": 4.05}, {"name": "Draw", "price": 3.35}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.97, "point": 2.5}, {"name": "Under", "price": 1.83, "point": 2.5}]}]}
    ]},
-  {"id": "e3", "sport_title": "Serie A", "commence_time": "2026-10-19T18:45:00Z", "home_team": "Roma", "away_team": "Lazio",
+  {"id": "e3", "sport_key": "soccer_italy_serie_a", "sport_title": "Serie A", "commence_time": "2026-10-19T18:45:00Z", "home_team": "Roma", "away_team": "Lazio",
    "bookmakers": [
-     {"key": "bwin", "title": "bwin", "markets": [{"key": "h2h", "outcomes": [{"name": "Roma", "price": 1.90}, {"name": "Lazio", "price": 3.30}, {"name": "Draw", "price": 3.10}]}]},
-     {"key": "unibet", "title": "Unibet", "markets": [{"key": "h2h", "outcomes": [{"name": "Roma", "price": 1.85}, {"name": "Lazio", "price": 3.40}, {"name": "Draw", "price": 3.20}]}]}
+     {"key": "bwin", "title": "bwin", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Roma", "price": 2.15}, {"name": "Lazio", "price": 3.30}, {"name": "Draw", "price": 3.10}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.85, "point": 2.5}, {"name": "Under", "price": 1.95, "point": 2.5}]}]},
+     {"key": "unibet", "title": "Unibet", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Roma", "price": 2.05}, {"name": "Lazio", "price": 3.40}, {"name": "Draw", "price": 3.20}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.90, "point": 2.5}, {"name": "Under", "price": 1.90, "point": 2.5}]}]}
    ]},
-  {"id": "e4", "sport_title": "Bundesliga", "commence_time": "2026-10-19T16:30:00Z", "home_team": "Mainz", "away_team": "Köln",
+  {"id": "e4", "sport_key": "soccer_germany_bundesliga", "sport_title": "Bundesliga", "commence_time": "2026-10-19T16:30:00Z", "home_team": "Mainz", "away_team": "Köln",
    "bookmakers": [
-     {"key": "bwin", "title": "bwin", "markets": [{"key": "h2h", "outcomes": [{"name": "Mainz", "price": 1.45}, {"name": "Köln", "price": 6.50}, {"name": "Draw", "price": 4.50}]}]}
+     {"key": "bwin", "title": "bwin", "markets": [
+       {"key": "h2h", "outcomes": [{"name": "Mainz", "price": 1.45}, {"name": "Köln", "price": 6.50}, {"name": "Draw", "price": 4.50}]},
+       {"key": "totals", "outcomes": [{"name": "Over", "price": 1.80, "point": 3.5}, {"name": "Under", "price": 2.00, "point": 3.5}]}]}
    ]}
 ]
