@@ -8,7 +8,7 @@ Read-only: this never places bets.
     python bwinbot.py track  --api --bookmaker bwin        # snapshot + odds movement
     python bwinbot.py settle --api                         # grade saved slips (run within 3 days)
     python bwinbot.py log --out slips_log.md               # markdown log, winners first
-    python bwinbot.py export                               # dashboard/slips.json + legs.json
+    python bwinbot.py export                               # docs/data/slips.json + legs.json
     python bwinbot.py report                               # hit rate vs. odds-implied, flat-stake ROI
 
 Credits: odds are cached (--cache-minutes), leagues with no matches in --hours are skipped via the
@@ -458,7 +458,7 @@ def main() -> None:
     p.add_argument("--db", default="slips.sqlite", help="slips, legs and odds snapshots (tracked in git)")
     p.add_argument("--cache-db", default=".cache.sqlite", help="API cache (not tracked)")
     p.add_argument("--out", help="log: also write the markdown log to this file")
-    p.add_argument("--out-dir", default="dashboard", help="export: where slips.json and legs.json go")
+    p.add_argument("--out-dir", default="docs/data", help="export: where slips.json and legs.json go (served by GitHub Pages)")
     args = p.parse_args()
 
     db = connect(args.db)

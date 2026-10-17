@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Football slip tracker</title>
+<style>
+  :root {
+    --bg: #f6f7f5; --panel: #ffffff; --fg: #1d2420; --muted: #66706a; --line: #dfe3df;
+    --accent: #1f7a5a; --good: #1a7f4b; --bad: #b3372f; --grid: #e6e9e6;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #131715; --panel: #1b201d; --fg: #e8ece9; --muted: #98a39c; --line: #2c342f;
+            --accent: #4fc59a; --good: #5fcf92; --bad: #ef7f76; --grid: #262d29; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 24px max(16px, env(safe-area-inset-left)) 40px max(16px, env(safe-area-inset-right)); display: grid; gap: 16px; }
+  h1 { margin: 0; font: 400 1.9rem/1.2 var(--serif); }
+  .take { margin: 4px 0 0; font-size: 1.05rem; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }
+  .kpi-value { font: 400 1.9rem/1.2 var(--serif); font-variant-numeric: tabular-nums; }
+  .card h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+  .note { margin: 2px 0 12px; }
+  #curve { position: relative; min-height: 220px; }
+  #curve svg { display: block; width: 100%; height: 220px; }
+  #tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-size: 12px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.15); z-index: 2; }
+  #tip small { display: block; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .chip { font: inherit; font-size: 12px; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+  .chip[aria-pressed=true] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .scroll { overflow: auto; max-height: 22rem; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  .num { text-align: right; }
+  .nowrap { white-space: nowrap; }
+  .won { color: var(--good); font-weight: 600; }
+  .lost { color: var(--bad); font-weight: 600; }
+  .open { color: var(--muted); }
+  tr.win td { font-weight: 600; }
+  @media (max-width: 36rem) { .narrow-hide { display: none; } }
+  noscript, #err { color: var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Football slip tracker</h1>
+    <p class="take" id="take">Loading…</p>
+    <p class="muted small" id="updated"></p>
+  </header>
+
+  <section class="kpis" aria-label="Summary">
+    <div class="card"><div class="muted small">Slips saved</div><div class="kpi-value" id="k-saved">—</div><div class="muted small">All time</div></div>
+    <div class="card"><div class="muted small">Open</div><div class="kpi-value" id="k-open">—</div><div class="muted small">Waiting on matches</div></div>
+    <div class="card"><div class="muted small">Won</div><div class="kpi-value" id="k-won">—</div><div class="muted small">Every leg right</div></div>
+    <div class="card"><div class="muted small">Hit rate</div><div class="kpi-value" id="k-hit">—</div><div class="muted small" id="k-implied">Odds imply —</div></div>
+    <div class="card"><div class="muted small">Profit per slip</div><div class="kpi-value" id="k-roi">—</div><div class="muted small">Flat 1-unit stake</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Running profit</h2>
+    <p class="muted small note">Units won or lost, one unit staked on each settled slip</p>
+    <div id="curve"><div id="tip" hidden></div></div>
+    <p class="muted small" id="curve-empty" hidden>The line starts after the first slip settles.</p>
+  </section>
+
+  <section class="card">
+    <h2>Slips</h2>
+    <p class="muted small note">Newest first. Winners are marked in green.</p>
+    <div class="chips" role="group" aria-label="Filter slips">
+      <button class="chip" data-f="all" aria-pressed="true">All</button>
+      <button class="chip" data-f="won" aria-pressed="false">Winners</button>
+      <button class="chip" data-f="pending" aria-pressed="false">Open</button>
+      <button class="chip" data-f="lost" aria-pressed="false">Lost</button>
+    </div>
+    <div class="scroll"><table id="slips"><thead><tr>
+      <th>Slip</th><th>Saved</th><th class="num">Total odds</th><th>Result</th><th class="num">Profit</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Legs</h2>
+    <p class="muted small note">Every selection on every slip</p>
+    <div class="scroll"><table id="legs"><thead><tr>
+      <th>Slip</th><th>Result</th><th class="num">Odds</th><th>Pick</th><th>Match</th>
+      <th class="narrow-hide">League</th><th class="narrow-hide">Kick-off</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <p class="muted small" id="err" hidden></p>
+  <noscript>This page needs JavaScript to show the slips.</noscript>
+  <p class="muted small">Hit rate is the share of settled slips where every leg won. "Odds imply" is what the bookmaker's prices say that share should be, margin included. A leg that lands exactly on its line is void and drops out of the slip's odds. Updated once a day from the BwinBot repository. This tracks suggested slips only; it places no bets and is not betting advice.</p>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const pct = (v, d = 0) => (v * 100).toFixed(d) + '%';
+  const signedPct = (v) => (v >= 0 ? '+' : '−') + Math.abs(v * 100).toFixed(1) + '%';
+  const units = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const day = (s) => { const d = new Date(s); return MON[d.getUTCMonth()] + ' ' + d.getUTCDate(); };
+  const kick = (s) => { const d = new Date(s); return day(s) + ', ' + String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') + ' UTC'; };
+  const LABEL = { won: 'Won', lost: 'Lost', pending: 'Open', open: 'Open', void: 'Void' };
+  const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+  const statusCell = (s) => el('td', LABEL[s] || s, s === 'won' || s === 'lost' ? s : 'open');
+  const NS = 'http://www.w3.org/2000/svg';
+  const svgEl = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+  let slips = [], legs = [], filter = 'all';
+
+  function summary() {
+    const settled = slips.filter((s) => s.status === 'won' || s.status === 'lost');
+    const won = settled.filter((s) => s.status === 'won').length;
+    const n = settled.length;
+    return {
+      saved: slips.length, open: slips.filter((s) => s.status === 'pending').length, settled: n, won,
+      hit: n ? won / n : null,
+      implied: n ? settled.reduce((a, s) => a + s.implied_prob, 0) / n : null,
+      roi: n ? settled.reduce((a, s) => a + s.profit, 0) / n : null,
+    };
+  }
+
+  function drawSummary() {
+    const s = summary();
+    $('k-saved').textContent = s.saved; $('k-open').textContent = s.open; $('k-won').textContent = s.won;
+    $('k-hit').textContent = s.hit === null ? '—' : pct(s.hit);
+    $('k-implied').textContent = 'Odds imply ' + (s.implied === null ? '—' : pct(s.implied));
+    $('k-roi').textContent = s.roi === null ? '—' : signedPct(s.roi);
+    $('take').textContent = s.settled
+      ? `Won ${s.won} of ${s.settled} settled slips, ${s.open} still open.`
+      : `No results yet. ${s.open} ${s.open === 1 ? 'slip is' : 'slips are'} waiting on matches.`;
+  }
+
+  function drawCurve() {
+    const box = $('curve'), tip = $('tip');
+    box.querySelectorAll('svg').forEach((n) => n.remove());
+    tip.hidden = true;
+    let total = 0;
+    const rows = slips.filter((s) => s.status === 'won' || s.status === 'lost').sort((a, b) => a.slip_id - b.slip_id)
+      .map((s, i) => ({ n: i + 1, ...s, cum: Math.round((total += s.profit) * 100) / 100 }));
+    $('curve-empty').hidden = rows.length > 0;
+    if (!rows.length) return;
+
+    const W = Math.max(box.clientWidth, 260), H = 220, bottom = 28, top = 10;
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Cumulative profit by settled slip' });
+    box.prepend(svg);
+    const lo = Math.min(0, ...rows.map((r) => r.cum)), hi = Math.max(0, ...rows.map((r) => r.cum));
+    const pad = Math.max(0.5, (hi - lo) * 0.15);
+    const y0 = lo - pad, y1 = hi + pad;
+    const y = (v) => top + (1 - (v - y0) / (y1 - y0)) * (H - top - bottom);
+    const step = Math.max(0.5, Math.ceil(((y1 - y0) / 5) * 2) / 2);
+    const ticks = [];
+    for (let t = Math.ceil(y0 / step) * step; t <= y1; t += step) ticks.push(Math.round(t * 100) / 100);
+    const tmp = svgEl('text', { 'font-size': 11 }); svg.append(tmp);
+    const left = Math.ceil(Math.max(...ticks.map((t) => { tmp.textContent = units(t); return tmp.getComputedTextLength(); }))) + 14;
+    tmp.remove();
+    const x = (i) => left + ((i + 0.5) / rows.length) * (W - left - 12);
+
+    ticks.forEach((t) => {
+      svg.append(svgEl('line', { x1: left, x2: W - 8, y1: y(t), y2: y(t), stroke: t === 0 ? 'var(--muted)' : 'var(--grid)', 'stroke-width': 1 }));
+      const l = svgEl('text', { x: left - 8, y: y(t) + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)' });
+      l.textContent = units(t); svg.append(l);
+    });
+    rows.forEach((r, i) => {
+      const l = svgEl('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)' });
+      l.textContent = '#' + r.slip_id; svg.append(l);
+    });
+    svg.append(svgEl('path', { d: rows.map((r, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(r.cum)).join(' '), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+    rows.forEach((r, i) => {
+      const c = svgEl('circle', { cx: x(i), cy: y(r.cum), r: 5, fill: r.status === 'won' ? 'var(--accent)' : 'var(--bad)', stroke: 'var(--panel)', 'stroke-width': 2 });
+      const show = (ev) => {
+        tip.replaceChildren(el('small', `#${r.slip_id} · ${day(r.date)} · ${LABEL[r.status]}`), document.createTextNode(units(r.cum) + ' u total'));
+        tip.hidden = false;
+        const b = box.getBoundingClientRect();
+        tip.style.left = Math.min(Math.max(ev.clientX - b.left + 12, 0), Math.max(b.width - tip.offsetWidth, 0)) + 'px';
+        tip.style.top = Math.max(ev.clientY - b.top - 44, 0) + 'px';
+      };
+      c.addEventListener('pointerenter', show); c.addEventListener('pointermove', show);
+      c.addEventListener('pointerleave', () => { tip.hidden = true; });
+      svg.append(c);
+    });
+  }
+
+  function drawSlips() {
+    const body = document.querySelector('#slips tbody');
+    const shown = slips.filter((s) => filter === 'all' || s.status === filter).sort((a, b) => b.slip_id - a.slip_id);
+    if (!shown.length) { const td = el('td', 'Nothing here yet.', 'open'); td.colSpan = 5; body.replaceChildren(el('tr')); body.firstChild.append(td); return; }
+    body.replaceChildren(...shown.map((s) => {
+      const tr = el('tr', undefined, s.status === 'won' ? 'win' : '');
+      tr.append(el('td', '#' + s.slip_id), el('td', day(s.date)), el('td', s.total.toFixed(2), 'num'), statusCell(s.status),
+        el('td', s.profit === null ? '—' : units(s.profit) + ' u', 'num'));
+      return tr;
+    }));
+  }
+
+  function drawLegs() {
+    const body = document.querySelector('#legs tbody');
+    body.replaceChildren(...legs.slice().sort((a, b) => b.slip_id - a.slip_id || String(a.leg_id).localeCompare(String(b.leg_id), undefined, { numeric: true })).map((l) => {
+      const tr = el('tr');
+      tr.append(el('td', '#' + l.slip_id), statusCell(l.result), el('td', l.odds.toFixed(2), 'num'), el('td', l.pick, 'nowrap'), el('td', l.match),
+        el('td', l.league, 'narrow-hide'), el('td', kick(l.kickoff), 'narrow-hide'));
+      return tr;
+    }));
+  }
+
+  document.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+    filter = b.dataset.f;
+    document.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', String(c === b)));
+    drawSlips();
+  }));
+  let resizeTimer;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawCurve, 150); });
+
+  const get = (name) => fetch(`data/${name}.json?t=${Date.now()}`).then((r) => { if (!r.ok) throw new Error(name + ' ' + r.status); return r; });
+  Promise.all([get('slips'), get('legs')])
+    .then(async ([a, b]) => {
+      slips = await a.json(); legs = await b.json();
+      const mod = a.headers.get('last-modified');
+      if (mod) $('updated').textContent = 'Data updated ' + new Date(mod).toUTCString().replace('GMT', 'UTC');
+      drawSummary(); drawCurve(); drawSlips(); drawLegs();
+    })
+    .catch((e) => { $('take').textContent = 'The data could not be loaded.'; $('err').hidden = false; $('err').textContent = String(e.message || e); });
+})();
+</script>
+</body>
+</html>
