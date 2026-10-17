@@ -256,13 +256,22 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.executescript("""
         CREATE TABLE IF NOT EXISTS snap (ts REAL, sel TEXT, odds REAL);
-        CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, ts REAL, body TEXT);
-        CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+
         CREATE TABLE IF NOT EXISTS slips (id INTEGER PRIMARY KEY, created TEXT, total REAL,
                                           status TEXT DEFAULT 'pending');
         CREATE TABLE IF NOT EXISTS legs (slip_id INTEGER, event_id TEXT, sport_key TEXT, league TEXT,
                                          start TEXT, home TEXT, away TEXT, market TEXT, point REAL,
                                          pick TEXT, odds REAL, bookmaker TEXT, result TEXT);
+    """)
+    return db
+
+
+def connect_cache(path: str) -> sqlite3.Connection:
+    """Throwaway API cache + last-known credits; kept out of git and apart from slip history."""
+    db = sqlite3.connect(path)
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, ts REAL, body TEXT);
+        CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
     """)
     return db
 
@@ -336,36 +345,66 @@ def settle(db, get_scores, now: datetime | None = None) -> int:
     return graded
 
 
-def report(db) -> None:
+def _slip_summary(db) -> str | None:
     n_won = n_settled = 0
     implied = profit = 0.0
+    for slip_id, status in db.execute("SELECT id, status FROM slips").fetchall():
+        if status not in ("won", "lost"):
+            continue
+        live = [o for (o, r) in db.execute("SELECT odds, result FROM legs WHERE slip_id = ?", (slip_id,))
+                if r != "void"]  # void legs drop out of the accumulator
+        n_settled += 1
+        implied += prod(1 / o for o in live)
+        if status == "won":
+            n_won += 1
+            profit += prod(live) - 1
+        else:
+            profit -= 1
+    if not n_settled:
+        return None
+    return (f"Settled {n_settled}: won {n_won} ({n_won / n_settled:.0%}), "
+            f"odds-implied hit rate {implied / n_settled:.0%}, "
+            f"flat 1-unit ROI {profit / n_settled:+.0%}")
+
+
+def report(db) -> None:
     for slip_id, created, total, status in db.execute(
             "SELECT id, created, total, status FROM slips ORDER BY id").fetchall():
-        legs = db.execute("SELECT odds, result FROM legs WHERE slip_id = ?", (slip_id,)).fetchall()
-        live = [o for o, r in legs if r != "void"]  # void legs drop out of the accumulator
-        eff = prod(live) if live else 1.0
-        print(f"Slip #{slip_id}  {created}  total {total:.2f}  effective {eff:.2f}  {status.upper()}")
-        if status in ("won", "lost"):
-            n_settled += 1
-            implied += prod(1 / o for o in live)
-            if status == "won":
-                n_won += 1
-                profit += eff - 1
-            else:
-                profit -= 1
-    if not n_settled:
-        print("No settled slips yet.")
-        return
-    print(f"\nSettled {n_settled}: won {n_won} ({n_won / n_settled:.0%}), "
-          f"odds-implied hit rate {implied / n_settled:.0%}, "
-          f"flat 1-unit ROI {profit / n_settled:+.0%}")
+        live = [o for (o, r) in db.execute("SELECT odds, result FROM legs WHERE slip_id = ?", (slip_id,))
+                if r != "void"]
+        print(f"Slip #{slip_id}  {created}  total {total:.2f}  "
+              f"effective {prod(live) if live else 1.0:.2f}  {status.upper()}")
+    print(("\n" + summary) if (summary := _slip_summary(db)) else "No settled slips yet.")
+
+
+def render_log(db) -> str:
+    """Markdown log of every saved slip, winners first."""
+    out = ["# Slip log", "", _slip_summary(db) or "No settled slips yet.", ""]
+    sections = [("Winners", "won"), ("Pending", "pending"), ("Lost", "lost"), ("Void", "void")]
+    for title, status in sections:
+        slips = db.execute("SELECT id, created, total FROM slips WHERE status = ? ORDER BY id DESC",
+                           (status,)).fetchall()
+        out += [f"## {title} ({len(slips)})", ""]
+        for slip_id, created, total in slips or []:
+            out += [f"### Slip #{slip_id} - {created[:10]} - total {total:.2f}", "",
+                    "| Result | Odds | Pick | Match | League | Kick-off |", "|---|---|---|---|---|---|"]
+            for odds, result, pick, point, market, home, away, league, start in db.execute(
+                    "SELECT odds, result, pick, point, market, home, away, league, start FROM legs "
+                    "WHERE slip_id = ?", (slip_id,)):
+                line = (f"{pick} {point:g}" if market == "totals" else
+                        f"{pick} {point:+g}" if market == "spreads" else pick)
+                out.append(f"| {result or 'open'} | {odds:.2f} | {line} | {home} vs {away} | {league} | {start} |")
+            out.append("")
+        if not slips:
+            out += ["_none yet_", ""]
+    return "\n".join(out)
 
 
 # --- CLI --------------------------------------------------------------------------------
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("command", choices=["slip", "track", "books", "settle", "report", "quota"])
+    p.add_argument("command", choices=["slip", "track", "books", "settle", "report", "log", "quota"])
     p.add_argument("--sample", help="odds JSON file in The Odds API format")
     p.add_argument("--scores", help="scores JSON file in The Odds API format (for settle)")
     p.add_argument("--api", action="store_true", help="use The Odds API (needs ODDS_API_KEY)")
@@ -390,12 +429,21 @@ def main() -> None:
     p.add_argument("--hi", type=float, default=2.6)
     p.add_argument("--top", type=int, default=1, help="number of slips to show")
     p.add_argument("--save", action="store_true", help="store shown slips for later grading")
-    p.add_argument("--db", default="odds.sqlite")
+    p.add_argument("--db", default="slips.sqlite", help="slips, legs and odds snapshots (tracked in git)")
+    p.add_argument("--cache-db", default=".cache.sqlite", help="API cache (not tracked)")
+    p.add_argument("--out", help="log: also write the markdown log to this file")
     args = p.parse_args()
 
     db = connect(args.db)
+    cdb = connect_cache(args.cache_db)
     if args.command == "report":
         return report(db)
+    if args.command == "log":
+        text = render_log(db)
+        if args.out:
+            with open(args.out, "w") as f:
+                f.write(text)
+        return print(text)
     if args.command == "quota":
         api_get("")  # free call; only here to read the quota headers
         print(f"API credits remaining: {QUOTA['remaining']:.0f}")
@@ -403,13 +451,13 @@ def main() -> None:
     if args.command == "settle":
         if not (args.scores or args.api):
             p.error("choose --scores FILE or --api")
-        print(f"Graded {settle(db, scores_source(args, db))} legs.")
+        print(f"Graded {settle(db, scores_source(args, cdb))} legs.")
         report(db)
         return quota_summary()
     if not (args.sample or args.api):
         p.error("choose --sample FILE or --api")
 
-    events = load_events(args, db)
+    events = load_events(args, cdb)
     if args.command == "books":
         counts = Counter(b["key"] for ev in events for b in ev.get("bookmakers", []))
         print(f"{len(events)} events; bookmakers (key: events covered):")

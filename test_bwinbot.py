@@ -4,8 +4,8 @@ import tempfile
 from datetime import datetime, timezone
 from math import prod
 
-from bwinbot import (build_slips, connect, filter_selections, grade, report, save_slip, settle,
-                     to_selections, track)
+from bwinbot import (build_slips, connect, connect_cache, filter_selections, grade, render_log, report,
+                     save_slip, settle, to_selections, track)
 
 NOW = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
 
@@ -100,7 +100,7 @@ class _Args:
 def test_cached_reuses_fresh_data_and_guards_reserve():
     import bwinbot
     with tempfile.TemporaryDirectory() as d:
-        db = connect(os.path.join(d, "t.sqlite"))
+        db = connect_cache(os.path.join(d, "t.sqlite"))
         calls = []
         fetch = lambda: calls.append(1) or [{"id": "x"}]
         args = _Args()
@@ -111,3 +111,19 @@ def test_cached_reuses_fresh_data_and_guards_reserve():
         bwinbot.QUOTA["remaining"] = None
         assert bwinbot.cached(db, "k", fetch, 2, args) == [{"id": "x"}] and len(calls) == 1  # stale cache
         assert bwinbot.cached(db, "new", fetch, 2, args) == [] and len(calls) == 1  # nothing cached
+
+
+def test_log_lists_winners_first():
+    with tempfile.TemporaryDirectory() as d:
+        db = connect(os.path.join(d, "t.sqlite"))
+        chosen = {(s.event_id, s.pick): s for s in sels() if s.market == "h2h"}
+        win = save_slip(db, [chosen[("e1", "Arsenal")]])
+        lose = save_slip(db, [chosen[("e2", "Sevilla")]])
+        db.execute("UPDATE slips SET status='won' WHERE id=?", (win,))
+        db.execute("UPDATE slips SET status='lost' WHERE id=?", (lose,))
+        db.execute("UPDATE legs SET result='won' WHERE slip_id=?", (win,))
+        db.execute("UPDATE legs SET result='lost' WHERE slip_id=?", (lose,))
+        text = render_log(db)
+        assert text.index("## Winners (1)") < text.index(f"Slip #{win}") < text.index("## Pending (0)")
+        assert text.index(f"Slip #{lose}") > text.index("## Lost (1)")
+        assert "won 1 (50%)" in text
