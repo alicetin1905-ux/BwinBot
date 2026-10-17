@@ -72,12 +72,30 @@ def api_get(path: str, **params):
         return json.load(resp)
 
 
+def soccer_leagues(league: str | None, limit: int) -> list[str]:
+    """Active football league keys from the (free) /sports listing, outrights excluded."""
+    sports = api_get("")
+    keys = [x["key"] for x in sports
+            if x["group"] == "Soccer" and x["active"] and not x.get("has_outrights")
+            and (not league or league.lower() in x["title"].lower() or league.lower() in x["key"])]
+    return keys[:limit]
+
+
 def load_events(args) -> list[dict]:
     if args.sample:
         with open(args.sample) as f:
             return json.load(f)
-    return api_get(f"/{args.sport}/odds", regions=args.regions, markets=args.markets,
-                   oddsFormat="decimal")
+    keys = (soccer_leagues(args.league, args.max_leagues) if args.sport == "soccer"
+            else args.sport.split(","))
+    extra = {}
+    if args.hours is not None:
+        end = datetime.now(timezone.utc) + timedelta(hours=args.hours)
+        extra["commenceTimeTo"] = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+    events = []
+    for key in keys:
+        events += api_get(f"/{key}/odds", regions=args.regions, markets=args.markets,
+                          oddsFormat="decimal", **extra)
+    return events
 
 
 def scores_source(args):
@@ -91,7 +109,11 @@ def scores_source(args):
 # --- selections -------------------------------------------------------------------------
 
 def to_selections(events: list[dict], bookmaker: str | None = None) -> list[Selection]:
-    """Flatten events to selections. Edge uses the *other* bookmakers' margin-free probabilities."""
+    """Flatten events to selections. Edge uses the *other* bookmakers' margin-free probabilities.
+
+    Asian quarter lines (2.25, 1.75, ...) are skipped: they split the stake over two lines, which
+    `grade` does not model.
+    """
     out = []
     for ev in events:
         books = ev.get("bookmakers", [])
@@ -111,6 +133,8 @@ def to_selections(events: list[dict], bookmaker: str | None = None) -> list[Sele
                 continue
             for m in b["markets"]:
                 for o in m["outcomes"]:
+                    if o.get("point") is not None and (o["point"] * 2) % 1:
+                        continue
                     others = [p for k, p in fair[(m["key"], o["name"], o.get("point"))] if k != b["key"]]
                     edge = sum(others) / len(others) * o["price"] - 1 if others else None
                     out.append(Selection(
@@ -286,7 +310,9 @@ def main() -> None:
     p.add_argument("--sample", help="odds JSON file in The Odds API format")
     p.add_argument("--scores", help="scores JSON file in The Odds API format (for settle)")
     p.add_argument("--api", action="store_true", help="use The Odds API (needs ODDS_API_KEY)")
-    p.add_argument("--sport", default="upcoming")
+    p.add_argument("--sport", default="soccer",
+                   help="soccer (all active football leagues, see --max-leagues) or comma-separated keys")
+    p.add_argument("--max-leagues", type=int, default=10, help="cap on leagues fetched; each costs API credits")
     p.add_argument("--regions", default="eu")
     p.add_argument("--markets", default="h2h,totals", help="h2h,totals,spreads (each costs API quota)")
     p.add_argument("--bookmaker", help="only use this bookmaker key, e.g. bwin")

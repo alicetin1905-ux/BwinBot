@@ -80,3 +80,13 @@ def test_track_prints_movement(capsys):
         capsys.readouterr()
         track(db, sels())
         assert "->" in capsys.readouterr().out
+
+
+def test_quarter_lines_skipped():
+    ev = [{"id": "x", "sport_key": "soccer_epl", "sport_title": "EPL", "commence_time": "2026-10-18T14:00:00Z",
+           "home_team": "A", "away_team": "B", "bookmakers": [{"key": "k", "title": "K", "markets": [
+               {"key": "totals", "outcomes": [{"name": "Over", "price": 2.0, "point": 2.25},
+                                              {"name": "Under", "price": 1.9, "point": 2.25}]},
+               {"key": "totals", "outcomes": [{"name": "Over", "price": 1.8, "point": 2.5},
+                                              {"name": "Under", "price": 2.1, "point": 2.5}]}]}]}]
+    assert {s.point for s in to_selections(ev)} == {2.5}
