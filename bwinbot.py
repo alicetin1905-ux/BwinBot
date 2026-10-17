@@ -19,6 +19,7 @@ import os
 import sqlite3
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -27,6 +28,11 @@ from datetime import datetime, timedelta, timezone
 from math import prod
 
 ODDS_API = "https://api.the-odds-api.com/v4/sports"
+PRESETS = {  # --sport europe
+    "europe": ["soccer_epl", "soccer_efl_champ", "soccer_turkey_super_league",
+               "soccer_germany_bundesliga", "soccer_germany_bundesliga2", "soccer_belgium_first_div",
+               "soccer_netherlands_eredivisie", "soccer_italy_serie_a", "soccer_spain_la_liga"],
+}
 
 
 @dataclass(frozen=True)
@@ -85,16 +91,21 @@ def load_events(args) -> list[dict]:
     if args.sample:
         with open(args.sample) as f:
             return json.load(f)
-    keys = (soccer_leagues(args.league, args.max_leagues) if args.sport == "soccer"
-            else args.sport.split(","))
+    if args.sport == "soccer":
+        keys = soccer_leagues(args.league, args.max_leagues)
+    else:
+        keys = PRESETS.get(args.sport) or args.sport.split(",")
     extra = {}
     if args.hours is not None:
         end = datetime.now(timezone.utc) + timedelta(hours=args.hours)
         extra["commenceTimeTo"] = end.strftime("%Y-%m-%dT%H:%M:%SZ")
     events = []
     for key in keys:
-        events += api_get(f"/{key}/odds", regions=args.regions, markets=args.markets,
-                          oddsFormat="decimal", **extra)
+        try:
+            events += api_get(f"/{key}/odds", regions=args.regions, markets=args.markets,
+                              oddsFormat="decimal", **extra)
+        except urllib.error.HTTPError as e:  # e.g. league out of season
+            print(f"skipped {key}: HTTP {e.code}", file=sys.stderr)
     return events
 
 
@@ -313,8 +324,9 @@ def main() -> None:
     p.add_argument("--sample", help="odds JSON file in The Odds API format")
     p.add_argument("--scores", help="scores JSON file in The Odds API format (for settle)")
     p.add_argument("--api", action="store_true", help="use The Odds API (needs ODDS_API_KEY)")
-    p.add_argument("--sport", default="soccer",
-                   help="soccer (all active football leagues, see --max-leagues) or comma-separated keys")
+    p.add_argument("--sport", default="europe",
+                   help="europe (EPL, Championship, Turkey, Bundesliga 1+2, Belgium, Eredivisie, Serie A,\n"
+                        "La Liga), soccer (every active football league, see --max-leagues) or comma-separated keys")
     p.add_argument("--max-leagues", type=int, default=10, help="cap on leagues fetched; each costs API credits")
     p.add_argument("--regions", default="eu")
     p.add_argument("--markets", default="h2h,totals", help="h2h,totals,spreads (each costs API quota)")
