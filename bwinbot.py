@@ -7,6 +7,8 @@ Read-only: this never places bets.
     python bwinbot.py slip   --api --bookmaker bwin --hours 48 --min-edge 0 --save
     python bwinbot.py track  --api --bookmaker bwin        # snapshot + odds movement
     python bwinbot.py settle --api                         # grade saved slips (run within 3 days)
+    python bwinbot.py log --out slips_log.md               # markdown log, winners first
+    python bwinbot.py export                               # dashboard/slips.json + legs.json
     python bwinbot.py report                               # hit rate vs. odds-implied, flat-stake ROI
 
 Credits: odds are cached (--cache-minutes), leagues with no matches in --hours are skipped via the
@@ -377,6 +379,32 @@ def report(db) -> None:
     print(("\n" + summary) if (summary := _slip_summary(db)) else "No settled slips yet.")
 
 
+def leg_label(market: str, pick: str, point: float | None) -> str:
+    if market == "totals":
+        return f"{pick} {point:g}"
+    return f"{pick} {point:+g}" if market == "spreads" else pick
+
+
+def export_rows(db) -> tuple[list[dict], list[dict]]:
+    """Slip and leg rows (plain JSON types) for the dashboard."""
+    slips, legs = [], []
+    for slip_id, created, total, status in db.execute(
+            "SELECT id, created, total, status FROM slips ORDER BY id").fetchall():
+        rows = db.execute("SELECT odds, result, pick, point, market, home, away, league, start FROM legs "
+                          "WHERE slip_id = ? ORDER BY rowid", (slip_id,)).fetchall()
+        live = [r[0] for r in rows if r[1] != "void"]
+        eff = prod(live) if live else 1.0
+        profit = round(eff - 1, 2) if status == "won" else -1.0 if status == "lost" else None
+        slips.append({"slip_id": slip_id, "date": created[:10], "status": status, "total": round(total, 2),
+                      "effective_odds": round(eff, 2), "profit": profit, "legs": len(rows),
+                      "implied_prob": round(prod(1 / o for o in live), 4) if live else None})
+        for i, (odds, result, pick, point, market, home, away, league, start) in enumerate(rows, 1):
+            legs.append({"leg_id": f"{slip_id}-{i}", "slip_id": slip_id, "date": created[:10],
+                         "result": result or "open", "odds": odds, "pick": leg_label(market, pick, point),
+                         "match": f"{home} vs {away}", "league": league, "kickoff": start})
+    return slips, legs
+
+
 def render_log(db) -> str:
     """Markdown log of every saved slip, winners first."""
     out = ["# Slip log", "", _slip_summary(db) or "No settled slips yet.", ""]
@@ -391,9 +419,7 @@ def render_log(db) -> str:
             for odds, result, pick, point, market, home, away, league, start in db.execute(
                     "SELECT odds, result, pick, point, market, home, away, league, start FROM legs "
                     "WHERE slip_id = ?", (slip_id,)):
-                line = (f"{pick} {point:g}" if market == "totals" else
-                        f"{pick} {point:+g}" if market == "spreads" else pick)
-                out.append(f"| {result or 'open'} | {odds:.2f} | {line} | {home} vs {away} | {league} | {start} |")
+                out.append(f"| {result or 'open'} | {odds:.2f} | {leg_label(market, pick, point)} | {home} vs {away} | {league} | {start} |")
             out.append("")
         if not slips:
             out += ["_none yet_", ""]
@@ -404,7 +430,7 @@ def render_log(db) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("command", choices=["slip", "track", "books", "settle", "report", "log", "quota"])
+    p.add_argument("command", choices=["slip", "track", "books", "settle", "report", "log", "export", "quota"])
     p.add_argument("--sample", help="odds JSON file in The Odds API format")
     p.add_argument("--scores", help="scores JSON file in The Odds API format (for settle)")
     p.add_argument("--api", action="store_true", help="use The Odds API (needs ODDS_API_KEY)")
@@ -432,6 +458,7 @@ def main() -> None:
     p.add_argument("--db", default="slips.sqlite", help="slips, legs and odds snapshots (tracked in git)")
     p.add_argument("--cache-db", default=".cache.sqlite", help="API cache (not tracked)")
     p.add_argument("--out", help="log: also write the markdown log to this file")
+    p.add_argument("--out-dir", default="dashboard", help="export: where slips.json and legs.json go")
     args = p.parse_args()
 
     db = connect(args.db)
@@ -444,6 +471,13 @@ def main() -> None:
             with open(args.out, "w") as f:
                 f.write(text)
         return print(text)
+    if args.command == "export":
+        os.makedirs(args.out_dir, exist_ok=True)
+        for name, rows in zip(("slips", "legs"), export_rows(db)):
+            with open(os.path.join(args.out_dir, f"{name}.json"), "w") as f:
+                json.dump(rows, f, indent=1, ensure_ascii=False)
+            print(f"{name}.json: {len(rows)} rows")
+        return
     if args.command == "quota":
         api_get("")  # free call; only here to read the quota headers
         print(f"API credits remaining: {QUOTA['remaining']:.0f}")

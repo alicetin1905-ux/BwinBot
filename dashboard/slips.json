@@ -1,0 +1,12 @@
+[
+ {
+  "slip_id": 1,
+  "date": "2026-10-17",
+  "status": "pending",
+  "total": 7.96,
+  "effective_odds": 7.96,
+  "profit": null,
+  "legs": 3,
+  "implied_prob": 0.1256
+ }
+]

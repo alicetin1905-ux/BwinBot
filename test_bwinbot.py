@@ -4,7 +4,7 @@ import tempfile
 from datetime import datetime, timezone
 from math import prod
 
-from bwinbot import (build_slips, connect, connect_cache, filter_selections, grade, render_log, report,
+from bwinbot import (build_slips, connect, connect_cache, export_rows, filter_selections, grade, render_log, report,
                      save_slip, settle, to_selections, track)
 
 NOW = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
@@ -127,3 +127,18 @@ def test_log_lists_winners_first():
         assert text.index("## Winners (1)") < text.index(f"Slip #{win}") < text.index("## Pending (0)")
         assert text.index(f"Slip #{lose}") > text.index("## Lost (1)")
         assert "won 1 (50%)" in text
+
+
+def test_export_rows_profit_and_labels():
+    with tempfile.TemporaryDirectory() as d:
+        db = connect(os.path.join(d, "t.sqlite"))
+        tot = [s for s in sels() if s.market == "totals" and s.event_id == "e1" and s.pick == "Over"][0]
+        win = save_slip(db, [tot])
+        lose = save_slip(db, [tot])
+        save_slip(db, [tot])  # stays pending
+        db.execute("UPDATE slips SET status='won' WHERE id=?", (win,))
+        db.execute("UPDATE slips SET status='lost' WHERE id=?", (lose,))
+        db.execute("UPDATE legs SET result='won' WHERE slip_id=?", (win,))
+        slips, legs = export_rows(db)
+        assert [s["profit"] for s in slips] == [round(tot.odds - 1, 2), -1.0, None]
+        assert legs[0]["pick"] == "Over 2.5" and legs[0]["leg_id"] == "1-1" and legs[2]["result"] == "open"

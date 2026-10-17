@@ -1,0 +1,35 @@
+[
+ {
+  "leg_id": "1-1",
+  "slip_id": 1,
+  "date": "2026-10-17",
+  "result": "open",
+  "odds": 2.0,
+  "pick": "Under 3.5",
+  "match": "FC Twente Enschede vs FC Utrecht",
+  "league": "Dutch Eredivisie",
+  "kickoff": "2026-10-18T18:00:00Z"
+ },
+ {
+  "leg_id": "1-2",
+  "slip_id": 1,
+  "date": "2026-10-17",
+  "result": "open",
+  "odds": 2.02,
+  "pick": "Over 3.5",
+  "match": "Real Madrid vs Sevilla",
+  "league": "La Liga - Spain",
+  "kickoff": "2026-10-18T19:00:00Z"
+ },
+ {
+  "leg_id": "1-3",
+  "slip_id": 1,
+  "date": "2026-10-17",
+  "result": "open",
+  "odds": 1.97,
+  "pick": "Over 2.5",
+  "match": "AS Roma vs Genoa",
+  "league": "Serie A - Italy",
+  "kickoff": "2026-10-17T18:45:00Z"
+ }
+]
