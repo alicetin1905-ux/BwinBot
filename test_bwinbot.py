@@ -90,3 +90,24 @@ def test_quarter_lines_skipped():
                {"key": "totals", "outcomes": [{"name": "Over", "price": 1.8, "point": 2.5},
                                               {"name": "Under", "price": 2.1, "point": 2.5}]}]}]}]
     assert {s.point for s in to_selections(ev)} == {2.5}
+
+
+class _Args:
+    cache_minutes = 60
+    reserve = 100
+
+
+def test_cached_reuses_fresh_data_and_guards_reserve():
+    import bwinbot
+    with tempfile.TemporaryDirectory() as d:
+        db = connect(os.path.join(d, "t.sqlite"))
+        calls = []
+        fetch = lambda: calls.append(1) or [{"id": "x"}]
+        args = _Args()
+        assert bwinbot.cached(db, "k", fetch, 2, args) == [{"id": "x"}]
+        assert bwinbot.cached(db, "k", fetch, 2, args) == [{"id": "x"}] and len(calls) == 1
+        args.cache_minutes = 0  # force refresh; 101 left - cost 2 would dip below the reserve of 100
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('remaining', '101')")
+        bwinbot.QUOTA["remaining"] = None
+        assert bwinbot.cached(db, "k", fetch, 2, args) == [{"id": "x"}] and len(calls) == 1  # stale cache
+        assert bwinbot.cached(db, "new", fetch, 2, args) == [] and len(calls) == 1  # nothing cached

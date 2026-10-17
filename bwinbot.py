@@ -2,11 +2,15 @@
 
 Read-only: this never places bets.
 
+    python bwinbot.py quota                                # free: remaining API credits
     python bwinbot.py books  --api                         # which bookmakers does the feed cover?
     python bwinbot.py slip   --api --bookmaker bwin --hours 48 --min-edge 0 --save
     python bwinbot.py track  --api --bookmaker bwin        # snapshot + odds movement
     python bwinbot.py settle --api                         # grade saved slips (run within 3 days)
     python bwinbot.py report                               # hit rate vs. odds-implied, flat-stake ROI
+
+Credits: odds are cached (--cache-minutes), leagues with no matches in --hours are skipped via the
+free events endpoint, and fetching stops before remaining credits drop below --reserve.
 
 Offline: use --sample sample_odds.json and --scores sample_scores.json instead of --api.
 """
@@ -69,13 +73,47 @@ class Selection:
 
 # --- data sources -----------------------------------------------------------------------
 
+QUOTA = {"remaining": None, "spent": 0}  # filled from the API's x-requests-* headers
+
+
 def api_get(path: str, **params):
     key = os.environ.get("ODDS_API_KEY")
     if not key:
         sys.exit("Set ODDS_API_KEY (https://the-odds-api.com) or use --sample/--scores FILE")
     url = f"{ODDS_API}{path}?" + urllib.parse.urlencode({"apiKey": key, **params})
     with urllib.request.urlopen(url, timeout=30) as resp:
+        h = resp.headers
+        if h.get("x-requests-remaining") is not None:
+            QUOTA["remaining"] = float(h["x-requests-remaining"])
+            QUOTA["spent"] += float(h.get("x-requests-last") or 0)
         return json.load(resp)
+
+
+def cached(db, key: str, fetch, cost: float, args):
+    """Return fetch() with a cache and a credit guard, so the free plan is never used up.
+
+    Fresh cache (< --cache-minutes) is reused for free. Otherwise the call only happens if the
+    last known remaining credits stay above --reserve; if not, stale cache (or nothing) is used.
+    """
+    row = db.execute("SELECT ts, body FROM cache WHERE key = ?", (key,)).fetchone()
+    if row and time.time() - row[0] < args.cache_minutes * 60:
+        return json.loads(row[1])
+    left = db.execute("SELECT v FROM meta WHERE k = 'remaining'").fetchone()
+    left = QUOTA["remaining"] if QUOTA["remaining"] is not None else float(left[0]) if left else None
+    if left is not None and left - cost < args.reserve:
+        print(f"quota guard: {left:.0f} credits left, reserve {args.reserve:.0f}; "
+              f"{'using stale cache' if row else 'skipping'} for {key}", file=sys.stderr)
+        return json.loads(row[1]) if row else []
+    try:
+        data = fetch()
+    except urllib.error.HTTPError as e:  # e.g. league out of season
+        print(f"skipped {key}: HTTP {e.code}", file=sys.stderr)
+        return []
+    db.execute("INSERT OR REPLACE INTO cache VALUES (?, ?, ?)", (key, time.time(), json.dumps(data)))
+    if QUOTA["remaining"] is not None:
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('remaining', ?)", (str(QUOTA["remaining"]),))
+    db.commit()
+    return data
 
 
 def soccer_leagues(league: str | None, limit: int) -> list[str]:
@@ -87,7 +125,7 @@ def soccer_leagues(league: str | None, limit: int) -> list[str]:
     return keys[:limit]
 
 
-def load_events(args) -> list[dict]:
+def load_events(args, db) -> list[dict]:
     if args.sample:
         with open(args.sample) as f:
             return json.load(f)
@@ -95,26 +133,31 @@ def load_events(args) -> list[dict]:
         keys = soccer_leagues(args.league, args.max_leagues)
     else:
         keys = PRESETS.get(args.sport) or args.sport.split(",")
-    extra = {}
-    if args.hours is not None:
-        end = datetime.now(timezone.utc) + timedelta(hours=args.hours)
-        extra["commenceTimeTo"] = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (datetime.now(timezone.utc) + timedelta(hours=args.hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cost = len(args.markets.split(",")) * len(args.regions.split(","))
     events = []
     for key in keys:
+        # The /events listing is free; skip leagues with nothing in the window (saves credits).
         try:
-            events += api_get(f"/{key}/odds", regions=args.regions, markets=args.markets,
-                              oddsFormat="decimal", **extra)
-        except urllib.error.HTTPError as e:  # e.g. league out of season
+            if not api_get(f"/{key}/events", commenceTimeTo=end):
+                continue
+        except urllib.error.HTTPError as e:
             print(f"skipped {key}: HTTP {e.code}", file=sys.stderr)
+            continue
+        events += cached(db, f"odds|{key}|{args.regions}|{args.markets}",
+                         lambda: api_get(f"/{key}/odds", regions=args.regions, markets=args.markets,
+                                         oddsFormat="decimal"),
+                         cost, args)
     return events
 
 
-def scores_source(args):
+def scores_source(args, db):
     if args.scores:
         with open(args.scores) as f:
             data = json.load(f)
         return lambda sport_key: data
-    return lambda sport_key: api_get(f"/{sport_key}/scores", daysFrom=3)
+    return lambda sport_key: cached(db, f"scores|{sport_key}",
+                                    lambda: api_get(f"/{sport_key}/scores", daysFrom=3), 2, args)
 
 
 # --- selections -------------------------------------------------------------------------
@@ -213,6 +256,8 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.executescript("""
         CREATE TABLE IF NOT EXISTS snap (ts REAL, sel TEXT, odds REAL);
+        CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, ts REAL, body TEXT);
+        CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS slips (id INTEGER PRIMARY KEY, created TEXT, total REAL,
                                           status TEXT DEFAULT 'pending');
         CREATE TABLE IF NOT EXISTS legs (slip_id INTEGER, event_id TEXT, sport_key TEXT, league TEXT,
@@ -263,7 +308,7 @@ def grade(market, point, pick, home, away, scores: dict[str, float]) -> str:
 
 def settle(db, get_scores, now: datetime | None = None) -> int:
     """Grade pending legs of started events, then update slip statuses. Returns legs graded."""
-    now = (now or datetime.now(timezone.utc)).isoformat()
+    now = ((now or datetime.now(timezone.utc)) - timedelta(hours=2.5)).isoformat()  # match over?
     cache: dict[str, dict] = {}
     graded = 0
     rows = db.execute("SELECT rowid, event_id, sport_key, home, away, market, point, pick FROM legs "
@@ -320,7 +365,7 @@ def report(db) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("command", choices=["slip", "track", "books", "settle", "report"])
+    p.add_argument("command", choices=["slip", "track", "books", "settle", "report", "quota"])
     p.add_argument("--sample", help="odds JSON file in The Odds API format")
     p.add_argument("--scores", help="scores JSON file in The Odds API format (for settle)")
     p.add_argument("--api", action="store_true", help="use The Odds API (needs ODDS_API_KEY)")
@@ -332,7 +377,11 @@ def main() -> None:
     p.add_argument("--markets", default="h2h,totals", help="h2h,totals,spreads (each costs API quota)")
     p.add_argument("--bookmaker", help="only use this bookmaker key, e.g. bwin")
     p.add_argument("--league", help="substring of league name, e.g. 'epl'")
-    p.add_argument("--hours", type=float, help="only events starting within this many hours")
+    p.add_argument("--hours", type=float, default=72, help="only events starting within this many hours")
+    p.add_argument("--cache-minutes", type=float, default=360,
+                   help="reuse fetched odds this long before spending credits again (0 = always refresh)")
+    p.add_argument("--reserve", type=float, default=100,
+                   help="never let a fetch take remaining API credits below this")
     p.add_argument("--min-edge", type=float, help="minimum edge in percent, e.g. 0")
     p.add_argument("--legs", type=int, default=3)
     p.add_argument("--target", type=float, default=8.0)
@@ -344,37 +393,49 @@ def main() -> None:
     p.add_argument("--db", default="odds.sqlite")
     args = p.parse_args()
 
+    db = connect(args.db)
     if args.command == "report":
-        return report(connect(args.db))
+        return report(db)
+    if args.command == "quota":
+        api_get("")  # free call; only here to read the quota headers
+        print(f"API credits remaining: {QUOTA['remaining']:.0f}")
+        return
     if args.command == "settle":
         if not (args.scores or args.api):
             p.error("choose --scores FILE or --api")
-        print(f"Graded {settle(connect(args.db), scores_source(args))} legs.")
-        return report(connect(args.db))
+        print(f"Graded {settle(db, scores_source(args, db))} legs.")
+        report(db)
+        return quota_summary()
     if not (args.sample or args.api):
         p.error("choose --sample FILE or --api")
 
-    events = load_events(args)
+    events = load_events(args, db)
     if args.command == "books":
         counts = Counter(b["key"] for ev in events for b in ev.get("bookmakers", []))
         print(f"{len(events)} events; bookmakers (key: events covered):")
         for key, n in counts.most_common():
             print(f"  {key}: {n}")
-        return
+        return quota_summary()
 
     sels = filter_selections(
-        to_selections(events, args.bookmaker), args.league, args.hours,
+        to_selections(events, args.bookmaker), args.league, None if args.sample else args.hours,
         None if args.min_edge is None else args.min_edge / 100)
     if args.command == "track":
-        return track(connect(args.db), sels)
+        track(db, sels)
+        return quota_summary()
     slips = build_slips(sels, args.legs, args.target, args.tol, args.lo, args.hi, top=args.top)
     if not slips:
         print("No combination found; widen --tol, --lo/--hi, --hours or lower --min-edge.")
-    db = connect(args.db) if args.save else None
     for i, slip in enumerate(slips, 1):
         print_slip(slip, i if len(slips) > 1 else None)
-        if db:
+        if args.save:
             print(f"Saved as slip #{save_slip(db, slip)}")
+    quota_summary()
+
+
+def quota_summary() -> None:
+    if QUOTA["remaining"] is not None:
+        print(f"[API credits: spent {QUOTA['spent']:.0f} this run, {QUOTA['remaining']:.0f} remaining]")
 
 
 if __name__ == "__main__":
